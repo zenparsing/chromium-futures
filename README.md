@@ -84,23 +84,23 @@ class FutureAwaiter {
     return value_.has_value();
   }
 
-  void await_suspend(std::coroutine_handle<> resume) {
-    DCHECK(!value_);
+  void await_suspend(std::coroutine_handle<> handle) {
+    // NOTE: Awaiter objects are alive until after `await_resume` or
+    // until `handle.destroy()` is called.
     future_.AndThen(base::BindOnce(&FutureAwaiter::OnReady,
-                    weak_factory_.GetWeakPtr(), resume));
+                    base::Unretained(this), handle));
   }
 
   T await_resume() { return std::move(*value_); }
 
  private:
-  void OnReady(std::coroutine_handle<> resume, T value) {
+  void OnReady(std::coroutine_handle<> handle, T value) {
     value_ = std::move(value);
-    resume();
+    handle.resume();
   }
 
   Future<T> future_;
   absl::optional<T> value_;
-  base::WeakFactory<FutureAwaiter> weak_factory_{this};
 };
 
 template <typename T, typename... Args>
