@@ -48,7 +48,7 @@ class SharedPromise {
     void SetValue(T value) {
       DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
       if (promise_) {
-        promise_->SetValue(std::move(value));
+        promise_->SetValueWithSideEffects(std::move(value));
         promise_.reset();
       }
     }

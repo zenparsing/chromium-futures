@@ -57,6 +57,10 @@ class Promise {
 
   // Sets the completed value of the associated future.
   void SetValue(T value);
+
+  // Sets the completed value of the associated future. If a callback has been
+  // registered for the associated future it will be executed synchronously.
+  void SetValueWithSideEffects(T value) { SetValue(std::move(value), true); }
 };
 
 ```
@@ -112,11 +116,11 @@ struct std::coroutine_traits<Future<T>, Args...> {
 
     std::suspend_never final_suspend() const { return {}; }
 
-    void return_value(T value) { SetValue(std::move(value)); }
+    void return_value(T value) { SetValueWithSideEffects(std::move(value)); }
 
     void return_value(Future<T> future) {
       future.AndThen(base::BindOnce([](Promise<T> promise, T value) {
-        promise.SetValue(std::move(value));
+        promise.SetValueWithSideEffects(std::move(value));
       }, std::move(*this)));
     }
 

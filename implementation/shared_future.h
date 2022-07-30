@@ -142,7 +142,7 @@ class SharedFuture {
   static void TransformFutureValue(Promise<U> promise,
                                    base::OnceCallback<U(const T&)> callback,
                                    const T& value) {
-    promise.SetValue(std::move(callback).Run(value));
+    promise.SetValueWithSideEffects(std::move(callback).Run(value));
   }
 
   template <typename U>
@@ -156,7 +156,7 @@ class SharedFuture {
 
   template <typename U>
   static void UnwrapFutureValue(Promise<U> promise, U value) {
-    promise.SetValue(std::move(value));
+    promise.SetValueWithSideEffects(std::move(value));
   }
 
   scoped_refptr<State> state_;

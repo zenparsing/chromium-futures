@@ -50,7 +50,7 @@ class FutureJoin : public base::RefCounted<FutureJoin<Args...>> {
   void OnComplete(T value) {
     std::get<Index>(optionals_) = std::move(value);
     if (AllValuesReceived()) {
-      SetValue();
+      SetValueWithSideEffects();
     }
   }
 
@@ -106,7 +106,7 @@ class FutureVectorJoin : public base::RefCounted<FutureVectorJoin<T>> {
       for (auto& optional : optionals_) {
         values.push_back(std::move(*optional));
       }
-      promise_.SetValue(std::move(values));
+      promise_.SetValueWithSideEffects(std::move(values));
     }
   }
 

@@ -119,7 +119,7 @@ class Future {
   static void TransformFutureValue(Promise<U> promise,
                                    base::OnceCallback<U(T)> callback,
                                    T value) {
-    promise.SetValue(std::move(callback).Run(std::move(value)));
+    promise.SetValueWithSideEffects(std::move(callback).Run(std::move(value)));
   }
 
   template <typename U>
@@ -134,7 +134,7 @@ class Future {
 
   template <typename U>
   static void UnwrapFutureValue(Promise<U> promise, U value) {
-    promise.SetValue(std::move(value));
+    promise.SetValueWithSideEffects(std::move(value));
   }
 
   SEQUENCE_CHECKER(sequence_checker_);
@@ -185,18 +185,11 @@ class Promise {
   }
 
   // Sets the completed value of the associated future.
-  void SetValue(T value) {
-    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    if (callback_) {
-      base::SequencedTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE, base::BindOnce(std::move(callback_), std::move(value)));
-    } else if (future_ptr_) {
-      future_ptr_->SetValue(std::move(value));
-      future_ptr_ = nullptr;
-    } else {
-      NOTREACHED();
-    }
-  }
+  void SetValue(T value) { SetValue(std::move(value), false); }
+
+  // Sets the completed value of the associated future. If a callback has been
+  // registered for the promise it will be executed synchronously.
+  void SetValueWithSideEffects(T value) { SetValue(std::move(value), true); }
 
  private:
   friend class Future<T>;
@@ -206,6 +199,23 @@ class Promise {
     DCHECK(!callback_);
     callback_ = std::move(callback);
     future_ptr_ = nullptr;
+  }
+
+  void SetValue(T value, bool with_side_effects) {
+    DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+    if (callback_) {
+      if (with_side_effects) {
+        std::move(callback_).Run(std::move(value));
+      } else {
+        base::SequencedTaskRunnerHandle::Get()->PostTask(
+            FROM_HERE, base::BindOnce(std::move(callback_), std::move(value)));
+      }
+    } else if (future_ptr_) {
+      future_ptr_->SetValue(std::move(value));
+      future_ptr_ = nullptr;
+    } else {
+      NOTREACHED();
+    }
   }
 
   SEQUENCE_CHECKER(sequence_checker_);
