@@ -119,9 +119,13 @@ struct std::coroutine_traits<Future<T>, Args...> {
     void return_value(T value) { SetValueWithSideEffects(std::move(value)); }
 
     void return_value(Future<T> future) {
-      future.AndThen(base::BindOnce([](Promise<T> promise, T value) {
-        promise.SetValueWithSideEffects(std::move(value));
-      }, std::move(*this)));
+      if (auto value = future.GetValueSynchronously()) {
+        SetValueWithSideEffects(std::move(*value));
+      } else {
+        future.AndThen(base::BindOnce([](Promise<T> promise, T value) {
+          promise.SetValueWithSideEffects(std::move(value));
+        }, std::move(*this)));
+      }
     }
 
     void unhandled_exception() noexcept {}
