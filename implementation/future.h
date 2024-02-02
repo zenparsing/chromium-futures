@@ -1,20 +1,22 @@
-/* Copyright (c) 2022 The Brave Authors. All rights reserved.
+/* Copyright (c) 2023 The Brave Authors. All rights reserved.
  * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 #ifndef BRAVE_COMPONENTS_FUTURES_FUTURE_H_
 #define BRAVE_COMPONENTS_FUTURES_FUTURE_H_
 
+#include <coroutine>
+#include <optional>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 
-#include "base/callback.h"
+#include "base/functional/callback.h"
+#include "base/functional/callback_helpers.h"
 #include "base/memory/raw_ptr.h"
 #include "base/sequence_checker.h"
-#include "base/threading/sequenced_task_runner_handle.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include "base/task/single_thread_task_runner.h"
 
 namespace futures {
 
@@ -30,11 +32,6 @@ class Promise;
 //   future.AndThen(base::BindOnce([](int value) {}));
 template <typename T>
 class Future {
-  static_assert(!std::is_reference<T>::value && !std::is_pointer<T>::value,
-                "Future<T> is not supported for pointer or reference types");
-
-  static_assert(!std::is_void<T>::value, "Future<void> is not supported");
-
  public:
   using ValueType = T;
 
@@ -63,15 +60,15 @@ class Future {
   }
 
   // Returns the value of the future, if available.
-  absl::optional<T> GetValueSynchronously() { return std::move(value_); }
+  std::optional<T> GetValueSynchronously() { return std::move(value_); }
 
   // Attaches a callback that will be executed when the future value is
   // available. The callback will be executed on the caller's task runner.
   void AndThen(base::OnceCallback<void(T)> callback) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     if (value_) {
-      absl::optional<T> value = std::move(value_);
-      base::SequencedTaskRunnerHandle::Get()->PostTask(
+      std::optional<T> value = std::move(value_);
+      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
           FROM_HERE, base::BindOnce(std::move(callback), std::move(*value)));
     } else if (promise_ptr_) {
       promise_ptr_->SetCallback(std::move(callback));
@@ -138,7 +135,7 @@ class Future {
   }
 
   SEQUENCE_CHECKER(sequence_checker_);
-  absl::optional<T> value_;
+  std::optional<T> value_;
   raw_ptr<Promise<T>> promise_ptr_ = nullptr;
 };
 
@@ -188,7 +185,7 @@ class Promise {
   void SetValue(T value) { SetValue(std::move(value), false); }
 
   // Sets the completed value of the associated future. If a callback has been
-  // registered for the promise it will be executed synchronously.
+  // registered for the associated future it will be executed synchronously.
   void SetValueWithSideEffects(T value) { SetValue(std::move(value), true); }
 
  private:
@@ -207,7 +204,7 @@ class Promise {
       if (with_side_effects) {
         std::move(callback_).Run(std::move(value));
       } else {
-        base::SequencedTaskRunnerHandle::Get()->PostTask(
+        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
             FROM_HERE, base::BindOnce(std::move(callback_), std::move(value)));
       }
     } else if (future_ptr_) {
@@ -219,9 +216,46 @@ class Promise {
   }
 
   SEQUENCE_CHECKER(sequence_checker_);
-  absl::optional<Future<T>> future_;
+  std::optional<Future<T>> future_;
   raw_ptr<Future<T>> future_ptr_ = nullptr;
   base::OnceCallback<void(T)> callback_;
+};
+
+struct VoidFutureValue {};
+
+template <>
+class Future<void> : public Future<VoidFutureValue> {
+ public:
+  void AndThen(base::OnceCallback<void()> callback) {
+    Future<VoidFutureValue>::AndThen(
+        base::IgnoreArgs<VoidFutureValue>(std::move(callback)));
+  }
+
+  template <typename U>
+  Future<U> AndThen(base::OnceCallback<Future<U>()> callback) {
+    return Future<VoidFutureValue>::AndThen(
+        base::IgnoreArgs<VoidFutureValue>(std::move(callback)));
+  }
+
+  template <typename U>
+  Future<U> Transform(base::OnceCallback<U()> callback) {
+    return Future<VoidFutureValue>::Transform(
+        base::IgnoreArgs<VoidFutureValue>(std::move(callback)));
+  }
+};
+
+template <>
+class Promise<void> : public Promise<VoidFutureValue> {
+ public:
+  Future<void> GetFuture() {
+    return Future<void>(Promise<VoidFutureValue>::GetFuture());
+  }
+
+  void SetValue() { Promise<VoidFutureValue>::SetValue({}); }
+
+  void SetValueWithSideEffects() {
+    Promise<VoidFutureValue>::SetValueWithSideEffects({});
+  }
 };
 
 // Returns an already-completed future that wraps the provided value.
@@ -231,6 +265,8 @@ Future<T> MakeReadyFuture(T value) {
   promise.SetValue(std::move(value));
   return promise.GetFuture();
 }
+
+Future<void> MakeReadyFuture();
 
 template <typename... Args>
 struct PromiseExecutor {
@@ -258,6 +294,20 @@ struct PromiseExecutor<T> {
   }
 };
 
+template <>
+struct PromiseExecutor<void> {
+  using Promise = Promise<void>;
+
+  template <typename F>
+  static void Execute(F f, Promise promise) {
+    f(base::BindOnce([](Promise promise) { promise.SetValue(); },
+                     std::move(promise)));
+  }
+};
+
+template <>
+struct PromiseExecutor<> : public PromiseExecutor<void> {};
+
 template <typename... Args, typename F>
 auto MakeFuture(F&& f) {
   using Executor = PromiseExecutor<Args...>;
@@ -267,6 +317,121 @@ auto MakeFuture(F&& f) {
   return future;
 }
 
+template <typename T>
+class FutureAwaiter {
+ public:
+  explicit FutureAwaiter(Future<T> future) : future_(std::move(future)) {}
+
+  bool await_ready() noexcept {
+    value_ = future_.GetValueSynchronously();
+    return value_.has_value();
+  }
+
+  void await_suspend(std::coroutine_handle<> handle) {
+    // NOTE: Awaiter objects are alive until after `await_resume` or
+    // `handle.destroy()` is called.
+    future_.AndThen(base::BindOnce(&FutureAwaiter::OnReady,
+                                   base::Unretained(this), handle));
+  }
+
+  T await_resume() { return std::move(*value_); }
+
+ private:
+  void OnReady(std::coroutine_handle<> handle, T value) {
+    value_ = std::move(value);
+    handle.resume();
+  }
+
+  Future<T> future_;
+  std::optional<T> value_;
+};
+
+template <>
+class FutureAwaiter<void> {
+ public:
+  explicit FutureAwaiter(Future<void> future) : future_(std::move(future)) {}
+
+  bool await_ready() noexcept {
+    return future_.GetValueSynchronously().has_value();
+  }
+
+  void await_suspend(std::coroutine_handle<> handle) {
+    // NOTE: Awaiter objects are alive until after `await_resume` or
+    // `handle.destroy()` is called.
+    future_.AndThen(base::BindOnce(&FutureAwaiter::OnReady,
+                                   base::Unretained(this), handle));
+  }
+
+  void await_resume() {}
+
+ private:
+  void OnReady(std::coroutine_handle<> handle) { handle.resume(); }
+
+  Future<void> future_;
+};
+
 }  // namespace futures
+
+// TODO(zenparsing): We should probably disallow any parameter args that are
+// bare references or pointers.
+
+// TODO(zenparsing): We should require a weak pointer when the coroutine is a
+// member function.
+
+template <typename T, typename... Args>
+struct std::coroutine_traits<futures::Future<T>, Args...> {
+  struct promise_type : public futures::Promise<T> {
+    futures::Future<T> get_return_object() noexcept {
+      return this->GetFuture();
+    }
+
+    std::suspend_never initial_suspend() const noexcept { return {}; }
+
+    std::suspend_never final_suspend() const noexcept { return {}; }
+
+    void return_value(T value) noexcept {
+      this->SetValueWithSideEffects(std::move(value));
+    }
+
+    // TODO(zenparsing): Not sure if this overload is a good idea. Without it,
+    // users will have to type `co_return co_await <expr>` frequently, but the
+    // same shortcut cannot work for `Future<void>`.
+    void return_value(futures::Future<T> future) noexcept {
+      if (auto value = future.GetValueSynchronously()) {
+        this->SetValueWithSideEffects(std::move(*value));
+      } else {
+        future.AndThen(base::BindOnce(
+            [](futures::Promise<T> promise, T value) {
+              promise.SetValueWithSideEffects(std::move(value));
+            },
+            std::move(*this)));
+      }
+    }
+
+    void unhandled_exception() noexcept {}
+  };
+};
+
+template <typename... Args>
+struct std::coroutine_traits<futures::Future<void>, Args...> {
+  struct promise_type : public futures::Promise<void> {
+    futures::Future<void> get_return_object() noexcept {
+      return this->GetFuture();
+    }
+
+    std::suspend_never initial_suspend() const noexcept { return {}; }
+
+    std::suspend_never final_suspend() const noexcept { return {}; }
+
+    void return_void() noexcept { this->SetValueWithSideEffects(); }
+
+    void unhandled_exception() noexcept {}
+  };
+};
+
+template <typename T>
+auto operator co_await(futures::Future<T> future) {
+  return futures::FutureAwaiter(std::move(future));
+}
 
 #endif  // BRAVE_COMPONENTS_FUTURES_FUTURE_H_

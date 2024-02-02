@@ -1,12 +1,13 @@
-/* Copyright (c) 2022 The Brave Authors. All rights reserved.
+/* Copyright (c) 2023 The Brave Authors. All rights reserved.
  * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 #ifndef BRAVE_COMPONENTS_FUTURES_FUTURE_JOIN_H_
 #define BRAVE_COMPONENTS_FUTURES_FUTURE_JOIN_H_
 
 #include <algorithm>
+#include <optional>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -14,7 +15,6 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "brave/components/futures/future.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace futures {
 
@@ -50,7 +50,7 @@ class FutureJoin : public base::RefCounted<FutureJoin<Args...>> {
   void OnComplete(T value) {
     std::get<Index>(optionals_) = std::move(value);
     if (AllValuesReceived()) {
-      SetValueWithSideEffects();
+      SetValue();
     }
   }
 
@@ -59,13 +59,13 @@ class FutureJoin : public base::RefCounted<FutureJoin<Args...>> {
   }
 
   void SetValue() {
-    promise_.SetValue(
+    promise_.SetValueWithSideEffects(
         std::apply([](auto... opt) { return std::tuple(*std::move(opt)...); },
                    std::move(optionals_)));
   }
 
   Promise promise_;
-  std::tuple<absl::optional<Args>...> optionals_;
+  std::tuple<std::optional<Args>...> optionals_;
   bool started_ = false;
 };
 
@@ -116,7 +116,7 @@ class FutureVectorJoin : public base::RefCounted<FutureVectorJoin<T>> {
   }
 
   Promise promise_;
-  std::vector<absl::optional<T>> optionals_;
+  std::vector<std::optional<T>> optionals_;
   bool started_ = false;
 };
 

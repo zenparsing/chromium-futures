@@ -1,7 +1,7 @@
-/* Copyright (c) 2022 The Brave Authors. All rights reserved.
+/* Copyright (c) 2023 The Brave Authors. All rights reserved.
  * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 #include "brave/components/futures/future.h"
 
@@ -70,6 +70,16 @@ TEST_F(FutureTest, GetValueSynchronously) {
   EXPECT_EQ(*value, 1);
 }
 
+TEST_F(FutureTest, VoidFutures) {
+  Promise<void> promise;
+  bool called = false;
+  promise.GetFuture().AndThen(
+      base::BindLambdaForTesting([&]() { called = true; }));
+  EXPECT_FALSE(called);
+  promise.SetValueWithSideEffects();
+  EXPECT_TRUE(called);
+}
+
 TEST_F(FutureTest, MakeReadyFuture) {
   int value = 0;
   MakeReadyFuture(1).AndThen(
@@ -95,7 +105,18 @@ TEST_F(FutureTest, MakeFuture0) {
 
   MakeFuture([&](auto resolve) {
     std::move(resolve).Run();
-  }).AndThen(base::BindLambdaForTesting([&](std::tuple<>) { called = true; }));
+  }).AndThen(base::BindLambdaForTesting([&]() { called = true; }));
+
+  task_environment_.RunUntilIdle();
+  EXPECT_TRUE(called);
+}
+
+TEST_F(FutureTest, MakeFutureVoid) {
+  bool called = false;
+
+  MakeFuture<void>([&](auto resolve) {
+    std::move(resolve).Run();
+  }).AndThen(base::BindLambdaForTesting([&]() { called = true; }));
 
   task_environment_.RunUntilIdle();
   EXPECT_TRUE(called);
@@ -114,6 +135,55 @@ TEST_F(FutureTest, MakeFutureN) {
   EXPECT_EQ(std::get<0>(values), 42);
   EXPECT_TRUE(std::get<1>(values));
   EXPECT_EQ(std::get<2>(values), 1.3);
+}
+
+Future<int> DoAsyncWork() {
+  int value = co_await MakeReadyFuture(42);
+  co_return value * 2;
+}
+
+TEST_F(FutureTest, CoroutineFreeFunction) {
+  int value = 0;
+  DoAsyncWork().AndThen(base::BindLambdaForTesting([&](int v) { value = v; }));
+  task_environment_.RunUntilIdle();
+  EXPECT_EQ(value, 84);
+}
+
+Future<void> DoAsyncWorkVoid() {
+  co_await MakeReadyFuture();
+}
+
+TEST_F(FutureTest, CoroutineFreeVoidFunction) {
+  bool called = false;
+  DoAsyncWorkVoid().AndThen(
+      base::BindLambdaForTesting([&]() { called = true; }));
+  task_environment_.RunUntilIdle();
+  EXPECT_TRUE(called);
+}
+
+TEST_F(FutureTest, CoroutineMemberFunction) {
+  struct HasAsync {
+    Future<int> DoAsyncWork() {
+      Promise<int> promise;
+
+      base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE,
+          base::BindLambdaForTesting([&]() { promise.SetValue(4); }));
+
+      int val = co_await promise.GetFuture();
+      co_return val* val;
+    }
+  };
+
+  int value = 0;
+
+  HasAsync instance;
+  instance.DoAsyncWork().AndThen(
+      base::BindLambdaForTesting([&](int v) { value = v; }));
+
+  EXPECT_EQ(value, 0);
+  task_environment_.RunUntilIdle();
+  EXPECT_EQ(value, 16);
 }
 
 }  // namespace futures

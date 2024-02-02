@@ -1,17 +1,19 @@
-/* Copyright (c) 2022 The Brave Authors. All rights reserved.
+/* Copyright (c) 2023 The Brave Authors. All rights reserved.
  * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 #ifndef BRAVE_COMPONENTS_FUTURES_SHARED_PROMISE_H_
 #define BRAVE_COMPONENTS_FUTURES_SHARED_PROMISE_H_
 
 #include <list>
+#include <optional>
 #include <utility>
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
+#include "base/task/single_thread_task_runner.h"
 #include "brave/components/futures/future.h"
 
 namespace futures {
@@ -32,7 +34,7 @@ class SharedPromise {
  public:
   explicit SharedPromise(Promise<T> promise)
       : state_(new State(std::move(promise))),
-        task_runner_(base::SequencedTaskRunnerHandle::Get()) {}
+        task_runner_(base::SequencedTaskRunner::GetCurrentDefault()) {}
 
   // Sets the value of the underlying promise.
   void SetValue(T value) {
@@ -57,12 +59,21 @@ class SharedPromise {
     friend class base::RefCountedThreadSafe<State>;
     ~State() = default;
 
-    absl::optional<Promise<T>> promise_;
+    std::optional<Promise<T>> promise_;
     SEQUENCE_CHECKER(sequence_checker_);
   };
 
   scoped_refptr<State> state_;
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
+};
+
+template <>
+class SharedPromise<void> : public SharedPromise<VoidFutureValue> {
+ public:
+  explicit SharedPromise(Promise<void> promise)
+      : SharedPromise<VoidFutureValue>(std::move(promise)) {}
+
+  void SetValue() { SharedPromise<VoidFutureValue>::SetValue({}); }
 };
 
 }  // namespace futures

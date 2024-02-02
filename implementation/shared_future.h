@@ -1,17 +1,19 @@
-/* Copyright (c) 2022 The Brave Authors. All rights reserved.
+/* Copyright (c) 2023 The Brave Authors. All rights reserved.
  * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * License, v. 2.0. If a copy of the MPL was not distributed with this file,
+ * You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 #ifndef BRAVE_COMPONENTS_FUTURES_SHARED_FUTURE_H_
 #define BRAVE_COMPONENTS_FUTURES_SHARED_FUTURE_H_
 
 #include <list>
+#include <optional>
 #include <utility>
 
 #include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "base/sequence_checker.h"
+#include "base/task/single_thread_task_runner.h"
 #include "brave/components/futures/future.h"
 
 namespace futures {
@@ -33,7 +35,7 @@ class SharedFuture {
 
   explicit SharedFuture(Future<T> future)
       : state_(new State()),
-        task_runner_(base::SequencedTaskRunnerHandle::Get()) {
+        task_runner_(base::SequencedTaskRunner::GetCurrentDefault()) {
     future.AndThen(base::BindOnce(OnComplete, state_, task_runner_));
   }
 
@@ -46,8 +48,9 @@ class SharedFuture {
   // Attaches a callback that will be executed when the shared future value is
   // available. The callback will be executed on the caller's task runner.
   void AndThen(base::OnceCallback<void(const T&)> callback) {
-    Listener listener{.on_complete = std::move(callback),
-                      .task_runner = base::SequencedTaskRunnerHandle::Get()};
+    Listener listener{
+        .on_complete = std::move(callback),
+        .task_runner = base::SequencedTaskRunner::GetCurrentDefault()};
     task_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(&State::AddListener, state_, std::move(listener)));
@@ -133,7 +136,7 @@ class SharedFuture {
       std::move(callback).Run(value);
     }
 
-    absl::optional<T> value_;
+    std::optional<T> value_;
     std::list<Listener> listeners_;
     SEQUENCE_CHECKER(sequence_checker_);
   };
@@ -161,6 +164,30 @@ class SharedFuture {
 
   scoped_refptr<State> state_;
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
+};
+
+template <>
+class SharedFuture<void> : public SharedFuture<VoidFutureValue> {
+ public:
+  explicit SharedFuture(Future<void> future)
+      : SharedFuture<VoidFutureValue>(std::move(future)) {}
+
+  void AndThen(base::OnceCallback<void()> callback) {
+    SharedFuture<VoidFutureValue>::AndThen(
+        base::IgnoreArgs<const VoidFutureValue&>(std::move(callback)));
+  }
+
+  template <typename U>
+  Future<U> AndThen(base::OnceCallback<Future<U>()> callback) {
+    return SharedFuture<VoidFutureValue>::AndThen(
+        base::IgnoreArgs<const VoidFutureValue&>(std::move(callback)));
+  }
+
+  template <typename U>
+  Future<U> Transform(base::OnceCallback<U()> callback) {
+    return SharedFuture<VoidFutureValue>::Transform(
+        base::IgnoreArgs<const VoidFutureValue&>(std::move(callback)));
+  }
 };
 
 }  // namespace futures
