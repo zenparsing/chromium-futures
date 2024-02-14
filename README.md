@@ -15,31 +15,51 @@ becomes invalid, then the `Bind` API ensures that the member function will not b
 ```cpp
 
 // A class that provides a typical asynchronous callback API.
-class DoesAsyncThings {
+class AsyncClass {
  public:
 
   // This is an async member function. It accepts a callback.
-  void DoSomethingAsync(base::OnceCallback<void(int)> callback) {
+  void PerformAsyncAction(base::OnceCallback<void(int)> callback) {
     // Our first async step. Pass along a callback that will execute a
-    // member function we've defined, and store our callback in this
-    // callback. It's a bit confusing. Make sure to provide a weak pointer
-    // to ourself, so that we won't get called if we've been destroyed.
-    GetAsyncInt(base::BindOnce(
-        &DoesAsyncThings::OnAsyncIntReceived, weak_factory_.GetWeakPtr(),
+    // member function we've defined, and store the caller's callback in
+    // this callback. We provide a weak pointer to ourself, so that we
+    // won't get called if we've been destroyed.
+    PerformAsyncStepOne(base::BindOnce(
+        &DoesAsyncThings::OnAsyncStepOneCompleted, weak_factory_.GetWeakPtr(),
         std::move(callback)));
   }
 
  private:
-  void OnAsyncIntReceived(base::OnceCallback<void(int)> callback,
-                          int value) {
-    // Now we can execute the callback that the user provided.
+  void OnAsyncStepOneCompleted(base::OnceCallback<void(int)> callback,
+                               StepOneValue value) {
+    // Use `value` and perform the next step in the computation, again
+    // passing the user's callback along.
+    PerformAsyncStepTwo(base::BindOnce(
+        &DoesAsyncThings::OnAsyncStepOneCompleted, weak_factory_.GetWeakPtr(),
+        std::move(callback)));
+  }
+
+  void OnAsyncStepTwoCompleted(base::OnceCallback<void(int)> callback,
+                               StepTwoValue value) {
+    // Use `value` and perform the next step in the computation, again
+    // passing the user's callback along.
+    PerformAsyncStepThree(base::BindOnce(
+        &DoesAsyncThings::OnAsyncStepOneCompleted, weak_factory_.GetWeakPtr(),
+        std::move(callback)));
+  }
+
+  void OnAsyncStepThreeCompleted(base::OnceCallback<void(int)> callback,
+                                 int value) {
+    // Finally, we can execute the callback that the user provided.
     std::move(callback).Run(value);
   }
 
-  base::WeakPtrFactory<DoesAsyncThings> weak_factory_{this};
+  base::WeakPtrFactory<AsyncClass> weak_factory_{this};
 };
 
 ```
+
+> Note that `OnceCallback<>::Then` does not really help with async composition. Since it composes synchronous functions using `OnceCallback` as a wrapper, at best it can be used to avoid binding the user callback to the very last async step. It cannot eliminate any of the private member functions in the example above.
 
 A  small class that implements a single async flow with two or three steps is manageable, but
 when a class must implement more than one flow, or a flow which includes several steps, it quickly
@@ -79,7 +99,7 @@ outside of the scope of this solution.
 
 ## Solution Idea
 
-The solution consists of two parts, built one on top of the other:
+The solution consists of two parts, built using a layered approach:
 
 1. Reify async values using new `Future` and `Promise` classes. These APIs will be callback-based.
 2. Introduce language-level async functions by allowing coroutines to return `Future` objects.
@@ -323,21 +343,19 @@ callbacks:
 
 ```cpp
 
-class DoesAsyncThings {
+class AsyncClass {
  public:
-  Future<int> DoSomethingAsync() {
-    // Note that we will not resume from co_await if we have
-    // been destroyed in the meantime.
-    int value = co_await GetAsyncInt();
-    co_return value;
-  }
+  auto GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
 
-  base::WeakPtr<DoesAsyncThings> GetWeakPtr() {
-    return weak_factory_.GetWeakPtr();
+  Future<int> PerformAsyncAction(base::OnceCallback<void(int)> callback) {
+    // Note that we will not resume from co_await if we have been destroyed.
+    StepOneValue step_1_value = co_await PerformAsyncStepOne();
+    StepTwoValue step_2_value = co_await PerformAsyncStepTwo();
+    co_return PerformAsyncStepThree();
   }
 
  private:
-  base::WeakPtrFactory<DoesAsyncThings> weak_factory_{this};
+  base::WeakPtrFactory<AsyncClass> weak_factory_{this};
 };
 
 ```
