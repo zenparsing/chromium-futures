@@ -142,7 +142,7 @@ Future<void> Delay(base::TimeDelta delta) {
   Promise<void> promise;
   Future<void> future = promise.GetFuture();
 
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
       base::BindOnce([](Promise<void> p) { p.SetValue(); },
                      std::move(promise)),
@@ -160,7 +160,7 @@ A factory function is provided for easily adapting callback-based APIs:
 // The same, but using the `MakeFuture` factory.
 Future<void> Delay(base::TimeDelta delta) {
   return MakeFuture<void>([delta](auto callback) {
-    base::SingleThreadTaskRunner::GetCurrentDefault()->PostDelayedTask(
+    base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE, std::move(callback), delta);
   });
 }
@@ -287,13 +287,13 @@ Future<T> MakeReadyFuture(T value);
 // - More than one: `Future<std::tuple<Args...>>`
 //
 // When run, the callback function will set the value of the corresponding
-// promise object.
+// promise object. It may be called from any sequence.
 template <typename... Args, typename F>
 auto MakeFuture(F fn);
 
 ```
 
-### Memory Model
+### Memory
 
 `Future` and `Promise` do not perform dynamic memory allocation. They form an entangled
 pair, where each points to the other as long as the other is alive and necessary for the
@@ -301,9 +301,14 @@ completion of the future.
 
 ### Thread-Safety and Sequences
 
-`Future<T>` and `Promise<T>` are bound to the sequence on which they were created.
-They are not thread-safe. The types `SharedFuture<T>` and `SharedPromise<T>` can be
-used to pass them accross sequences.
+`Future<T>` and `Promise<T>` exist to coordinate computation along a single timeline
+("sequence"). They are bound to the sequence on which they were created, and are not
+thread-safe. In order to coordinate async tasks across sequences, the task and callback
+APIs must be used.
+
+For both ergonomic and safety reasons, the `OnceCallback` provided by the `MakeFuture`
+factory can be safely run from any sequence. It will always set the future value in the
+caller's sequence.
 
 ## Part 2: Async Functions Using Coroutines
 
