@@ -411,3 +411,7 @@ fn(callback, cancel_controller.token());
 cancel_controller.Cancel();
 
 ```
+
+## Implementation
+
+[Prototype](implementation/)
