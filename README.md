@@ -67,8 +67,8 @@ turns into a bag of seemingly unrelated private member functions with obscure na
 
 Furthermore, this class-callback pattern has compositionality issues. Although tasks can be
 composed by chaining callbacks together, attempts to compose tasks within a class will tend
-to further obfuscate the programmer's intent. The programmer may attempt to work around this
-problem by giving callback member functions increasingly long names.
+to further obfuscate the program. The programmer may attempt to work around this problem by
+giving callback member functions increasingly long names.
 
 The problem isn't due to the underlying facilities for async programming. The problem is that
 the programmer does not have the tools to properly express the intent of an async program.
