@@ -342,7 +342,7 @@ pointer becomes invalid.
 
 ### Async Member Functions
 
-Because Future-returning coroutines have knowledge of weak pointers, we are able to
+Because future-returning coroutines have knowledge of weak pointers, we are able to
 implement the familiar async class pattern from above with a coroutine instead of
 callbacks:
 
@@ -378,3 +378,36 @@ mechanism can be created in the following manner:
 * Let `CancelToken` be a non-empty class that provides weak pointers.
 * Pass a `CancelToken` object to an async function by reference.
 * To cancel the task, the caller can destroy the `CancelToken` instance.
+
+For example:
+
+```cpp
+
+struct CancelToken {
+  auto GetWeakPtr() const { return weak_ptr_factory.GetWeakPtr(); }
+  base::WeakPtrFactory<CancelToken> weak_ptr_factory{this};
+};
+
+class CancelController {
+ public:
+  void Cancel() { token_.emplace(); }
+  const CancelToken& token() const { return *token_; }
+ private:
+  std::optional<CancelToken> token_{std::in_place};
+};
+
+auto fn = [](const CancelToken&) -> Future<void> {
+  // The coroutine will not resume from this co_await if
+  // the cancel token has beed destroyed.
+  co_await Delay(base::Milliseconds(10));
+};
+
+CancelController cancel_controller;
+
+// Start the coroutine, providing the cancel token.
+fn(callback, cancel_controller.token());
+
+// Cancel the coroutine.
+cancel_controller.Cancel();
+
+```
