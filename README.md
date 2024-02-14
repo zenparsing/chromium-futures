@@ -117,11 +117,11 @@ programming. A **promise** represents the capability to eventually set the value
 ```cpp
 
 // Create a promise.
-Promise<int> promise;
+base::Promise<int> promise;
 
 // Take the future associated with the promise. We'll typically pass
 // it along to some caller.
-Future<int> future = promise.GetFuture();
+base::Future<int> future = promise.GetFuture();
 
 // Listen for the eventual value of the future.
 future.AndThen(base::BindOnce([](int value) {
@@ -138,14 +138,14 @@ A simple future-returning function:
 ```cpp
 
 // A future that settles after the specified delay.
-Future<void> Delay(base::TimeDelta delta) {
-  Promise<void> promise;
-  Future<void> future = promise.GetFuture();
+base::Future<void> Delay(base::TimeDelta delta) {
+  base::Promise<void> promise;
+  base::Future<void> future = promise.GetFuture();
 
   base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
-      base::BindOnce([](Promise<void> p) { p.SetValue(); },
-                     std::move(promise)),
+      base::BindOnce([](base::Promise<void> p) { p.SetValue(); },
+                        std::move(promise)),
       delta);
 
   return future;
@@ -158,8 +158,8 @@ A factory function is provided for easily adapting callback-based APIs:
 ```cpp
 
 // The same, but using the `MakeFuture` factory.
-Future<void> Delay(base::TimeDelta delta) {
-  return MakeFuture<void>([delta](auto callback) {
+base::Future<void> Delay(base::TimeDelta delta) {
+  return base::MakeFuture<void>([delta](auto callback) {
     base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
         FROM_HERE, std::move(callback), delta);
   });
@@ -326,8 +326,8 @@ Note that `co_yield` is not supported.
 A simple example:
 
 ```cpp
-Future<int> AsyncWork() {
-  int value = co_await MakeReadyFuture(42);
+base::Future<int> AsyncWork() {
+  int value = co_await base::MakeReadyFuture(42);
   co_return value * 2;
 }
 ```
@@ -352,7 +352,7 @@ class AsyncClass {
  public:
   auto GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
 
-  Future<int> PerformAsyncAction(base::OnceCallback<void(int)> callback) {
+  base::Future<int> PerformAsyncAction(base::OnceCallback<void(int)> callback) {
     // Note that we will not resume from co_await if we have been destroyed.
     StepOneValue step_1_value = co_await PerformAsyncStepOne();
     StepTwoValue step_2_value = co_await PerformAsyncStepTwo();
