@@ -65,10 +65,50 @@ A  small class that implements a single async flow with two or three steps is ma
 when a class must implement more than one flow, or a flow which includes several steps, it quickly
 turns into a bag of seemingly unrelated private member functions with obscure names.
 
+The programmer may attempt to reduce the number of private member functions by using empty
+lambdas instead:
+
+```cpp
+
+// Clearly no better than private member functions...
+class AsyncClass {
+ public:
+
+  void PerformAsyncAction(base::OnceCallback<void(int)> callback) {
+    auto on_step_one = [](base::WeakPtr self, decltype(callback) callback,
+                          StepOneResult result) {
+      if (!self) {
+        return;
+      }
+
+      auto on_step_two = [](base::WeakPtr self, decltype(callback) callback,
+                            StepTwoResult result) {
+        if (!self) {
+          return;
+        }
+        // etc...
+      };
+
+      PerformAsyncStepTwo(
+          base::BindOnce(on_step_two, self, std::move(callback)));
+    };
+
+    PerformAsyncStepOne(base::BindOnce(on_step_one, weak_factory_.GetWeakPtr(),
+                        std::move(callback)));
+  }
+
+ private:
+  base::WeakPtrFactory<AsyncClass> weak_factory_{this};
+};
+
+```
+
 Furthermore, this class-callback pattern has compositionality issues. Although tasks can be
 composed by chaining callbacks together, attempts to compose tasks within a class will tend
-to further obfuscate the program. The programmer may attempt to work around this problem by
-giving callback member functions increasingly long names.
+to further obfuscate things, requiring increasingly long member function callback names:
+
+* `OnCommonActionCompletedForThingOne`
+* `OnCommonActionCompletedForThingTwo`
 
 The problem isn't due to the underlying facilities for async programming. The problem is that
 the programmer does not have the tools to properly express the intent of an async program.
@@ -76,7 +116,7 @@ the programmer does not have the tools to properly express the intent of an asyn
 ## Design Goals
 
 New library APIs should be developed and C++ language features should be leveraged to make
-the typical async programming use case easier to develop and maintain.
+typical async programming use cases easier to develop and maintain.
 
 * The solution should occupy a layer above the scheduling and callback APIs and should not
 compete with those APIs.
@@ -92,9 +132,9 @@ Non-goals include:
 needs is another way to do multithreading.
 * Providing a fully generic library for utilizing C++ coroutines. Coroutines are a powerful
 language-level tool that can be used to express many different semantics and solve many
-different problems. We are focused on solving the callback-oriented programming problem.
-Generators (using a coroutine to produce a sequence of values) and async generators (using
-a coroutine to produce an asyncronous sequence of values), although interesting, should be
+different problems. The solution should be focused on solving the callback-oriented programming
+problem. Generators (using a coroutine to produce a sequence of values) and async generators
+(using a coroutine to produce an asyncronous sequence of values), although interesting, should be
 outside of the scope of this solution.
 
 ## Solution Idea
@@ -140,7 +180,7 @@ A simple future-returning function:
 // A future that settles after the specified delay.
 base::Future<void> Delay(base::TimeDelta delta) {
   base::Promise<void> promise;
-  base::Future<void> future = promise.GetFuture();
+  auto future = promise.GetFuture();
 
   base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
       FROM_HERE,
@@ -339,6 +379,30 @@ implicit object reference for member functions - must either be empty or must
 provide weak pointers via a `GetWeakPtr()` member function. For any such non-empty
 argument, the coroutine will not resume from a `co_await` if the corresponding weak
 pointer becomes invalid.
+
+```cpp
+
+class A {
+ public:
+  auto GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
+
+ private:
+  base::WeakPtrFactory<A> weak_factory_{this};
+};
+
+class B {
+ private:
+  int n_ = 0; // B is non-empty
+};
+
+// OK - the coroutine will only resume if `a_instance` is still alive.
+base::Future<int> AsyncWork(A& a_instance);
+
+// Error - B is not empty and does not provide `GetWeakPtr`.
+// base::Future<int> AsyncWork(B& b_instance);
+
+
+```
 
 ### Async Member Functions
 
