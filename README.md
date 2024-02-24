@@ -476,6 +476,59 @@ cancel_controller.Cancel();
 
 ```
 
+### Mojo Integration
+
+In order to allow mojo interfaces to be easily used from within async functions,
+mojo C++ bindings can be extended to provide future-returning overloads for all
+interface methods.
+
+The following interface:
+
+```
+module db.mojom;
+
+interface Table {
+  GetCount() => (uint64 count);
+};
+```
+
+Would generate a C++ base class similar to:
+
+```cpp
+
+namespace db::mojom {
+
+class Table {
+ public:
+  virtual ~Table() {}
+
+  using GetCountCallback = base::OnceCallback<void(uint64_t)>;
+
+  virtual void GetCount(GetCountCallback callback) = 0;
+
+  base::Future<uint64_t> GetCount() {
+    return base::MakeFuture<uint64_t>([this](auto callback) {
+      GetCount(std::move(callback));
+    });
+  }
+};
+
+}  // namespace db::mojom
+
+```
+
+And would be directly usable from within an async function:
+
+```cpp
+
+base::Future<void> UseTableInterface() {
+  Remote<db::mojom::Table> table;
+  GetTableInterface(table.BindNewPipeAndPassReceiver());
+  uint64_t = co_await table->GetCount();
+}
+
+```
+
 ## Implementation
 
 [Prototype](implementation/)
