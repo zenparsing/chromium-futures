@@ -103,6 +103,8 @@ class AsyncClass {
 
 ```
 
+but this only trades one obscure pattern for another.
+
 Furthermore, this class-callback pattern has compositionality issues. Although tasks can be
 composed by chaining callbacks together, attempts to compose tasks within a class will tend
 to further obfuscate things, requiring increasingly long member function callback names:
@@ -193,7 +195,7 @@ base::Future<void> Delay(base::TimeDelta delta) {
 
 ```
 
-A factory function is provided for easily adapting callback-based APIs:
+The factory function `MakeFuture<>` is provided for easily adapting callback-based APIs:
 
 ```cpp
 
@@ -348,7 +350,7 @@ APIs must be used.
 
 For both ergonomic and safety reasons, the `OnceCallback` provided by the `MakeFuture`
 factory can be safely run from any sequence. It will always set the future value in the
-caller's sequence.
+correct sequence.
 
 ## Part 2: Async Functions Using Coroutines
 
