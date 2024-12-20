@@ -25,7 +25,7 @@ class AsyncClass {
     // this callback. We provide a weak pointer to ourself, so that we
     // won't get called if we've been destroyed.
     PerformAsyncStepOne(base::BindOnce(
-        &DoesAsyncThings::OnAsyncStepOneCompleted, weak_factory_.GetWeakPtr(),
+        &DoesAsyncThings::OnAsyncStepOneCompleted, weak_factory_.AsWeakPtr(),
         std::move(callback)));
   }
 
@@ -35,7 +35,7 @@ class AsyncClass {
     // Use `value` and perform the next step in the computation, again
     // passing the user's callback along.
     PerformAsyncStepTwo(base::BindOnce(
-        &DoesAsyncThings::OnAsyncStepOneCompleted, weak_factory_.GetWeakPtr(),
+        &DoesAsyncThings::OnAsyncStepOneCompleted, weak_factory_.AsWeakPtr(),
         std::move(callback)));
   }
 
@@ -44,7 +44,7 @@ class AsyncClass {
     // Use `value` and perform the next step in the computation, again
     // passing the user's callback along.
     PerformAsyncStepThree(base::BindOnce(
-        &DoesAsyncThings::OnAsyncStepOneCompleted, weak_factory_.GetWeakPtr(),
+        &DoesAsyncThings::OnAsyncStepOneCompleted, weak_factory_.AsWeakPtr(),
         std::move(callback)));
   }
 
@@ -93,7 +93,7 @@ class AsyncClass {
           base::BindOnce(on_step_two, self, std::move(callback)));
     };
 
-    PerformAsyncStepOne(base::BindOnce(on_step_one, weak_factory_.GetWeakPtr(),
+    PerformAsyncStepOne(base::BindOnce(on_step_one, weak_factory_.AsWeakPtr(),
                         std::move(callback)));
   }
 
@@ -130,8 +130,7 @@ provide the programmer with a new implementation option.
 
 Non-goals include:
 
-* Introducing new threading primatives. The last thing an application-level Chromium engineer
-needs is another way to do multithreading.
+* Introducing new threading primatives or APIs.
 * Providing a fully generic library for utilizing C++ coroutines. Coroutines are a powerful
 language-level tool that can be used to express many different semantics and solve many
 different problems. The solution should be focused on solving the callback-oriented programming
@@ -378,7 +377,7 @@ base::Future<int> AsyncWork() {
 
 All coroutine arguments that are passed by reference or pointer - including the
 implicit object reference for member functions - must either be empty or must
-provide weak pointers via a `GetWeakPtr()` member function. For any such non-empty
+provide weak pointers via an `AsWeakPtr()` member function. For any such non-empty
 argument, the coroutine will not resume from a `co_await` if the corresponding weak
 pointer becomes invalid.
 
@@ -386,7 +385,7 @@ pointer becomes invalid.
 
 class A {
  public:
-  auto GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
+  auto AsWeakPtr() { return weak_factory_.GetWeakPtr(); }
 
  private:
   base::WeakPtrFactory<A> weak_factory_{this};
@@ -400,7 +399,7 @@ class B {
 // OK - the coroutine will only resume if `a_instance` is still alive.
 base::Future<int> AsyncWork(A& a_instance);
 
-// Error - B is not empty and does not provide `GetWeakPtr`.
+// Error - B is not empty and does not provide `AsWeakPtr`.
 // base::Future<int> AsyncWork(B& b_instance);
 
 
@@ -416,7 +415,7 @@ callbacks:
 
 class AsyncClass {
  public:
-  auto GetWeakPtr() { return weak_factory_.GetWeakPtr(); }
+  auto AsWeakPtr() { return weak_factory_.GetWeakPtr(); }
 
   base::Future<int> PerformAsyncAction(base::OnceCallback<void(int)> callback) {
     // Note that we will not resume from co_await if we have been destroyed.
@@ -450,7 +449,7 @@ For example:
 ```cpp
 
 struct CancelToken {
-  auto GetWeakPtr() const { return weak_ptr_factory.GetWeakPtr(); }
+  auto AsWeakPtr() const { return weak_ptr_factory.AsWeakPtr(); }
   base::WeakPtrFactory<CancelToken> weak_ptr_factory{this};
 };
 

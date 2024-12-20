@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef BASE_FUTURES_FUTURE_H_
-#define BASE_FUTURES_FUTURE_H_
+#ifndef BASE_ASYNC_FUTURE_H_
+#define BASE_ASYNC_FUTURE_H_
 
 #include <concepts>
 #include <coroutine>
@@ -21,47 +21,6 @@
 #include "base/task/sequenced_task_runner.h"
 
 namespace base {
-
-#if DCHECK_IS_ON()
-
-namespace internal {
-
-class FutureActiveState {
- public:
-  FutureActiveState() {}
-
-  FutureActiveState(const FutureActiveState&) = delete;
-  FutureActiveState& operator=(const FutureActiveState&) = delete;
-
-  FutureActiveState(FutureActiveState&& other) { *this = std::move(other); }
-
-  FutureActiveState& operator=(FutureActiveState&& other) {
-    if (this != &other) {
-      active_ = other.active_;
-      other.active_ = false;
-    }
-    return *this;
-  }
-
-  void SetInactive() {
-    CHECK(active_);
-    active_ = false;
-  }
-
- private:
-  bool active_ = true;
-};
-
-#else
-
-class FutureActiveState {
- public:
-  void SetInactive() {}
-};
-
-#endif
-
-}  // namespace internal
 
 template <typename T>
 class Promise;
@@ -91,7 +50,6 @@ class Future {
     if (this != &other) {
       value_ = std::move(other.value_);
       promise_ptr_ = std::exchange(other.promise_ptr_, nullptr);
-      active_state_ = std::move(other.active_state_);
       if (promise_ptr_) {
         promise_ptr_->future_ptr_ = this;
       }
@@ -111,38 +69,39 @@ class Future {
 
   // Attaches a callback that will be executed when the future value is
   // available. The callback will be executed on the caller's task runner.
-  void AndThen(base::OnceCallback<void(T)> callback) {
+  void AndThen(OnceCallback<void(T)> callback) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    active_state_.SetInactive();
     if (value_) {
       std::optional<T> value = std::move(value_);
-      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-          FROM_HERE, base::BindOnce(std::move(callback), std::move(*value)));
+      SequencedTaskRunner::GetCurrentDefault()->PostTask(
+          FROM_HERE, BindOnce(std::move(callback), std::move(*value)));
     } else if (promise_ptr_) {
       promise_ptr_->SetCallback(std::move(callback));
       promise_ptr_ = nullptr;
+    } else {
+      NOTREACHED() << "Cannot attach a callback to an inactive future";
     }
   }
 
   // Attaches a transforming callback that will be executed when the future
   // value is available. Returns a future for the transformed value.
   template <typename U>
-  Future<U> AndThen(base::OnceCallback<Future<U>(T)> callback) {
+  Future<U> AndThen(OnceCallback<Future<U>(T)> callback) {
     Promise<U> promise;
     Future<U> future = promise.GetFuture();
-    AndThen(base::BindOnce(TransformAndUnwrapFutureValue<U>, std::move(promise),
-                           std::move(callback)));
+    AndThen(BindOnce(TransformAndUnwrapFutureValue<U>, std::move(promise),
+                     std::move(callback)));
     return future;
   }
 
   // Attaches a transforming callback that will be executed when the future
   // value is available. Returns a future for the transformed value.
   template <typename U>
-  Future<U> Transform(base::OnceCallback<U(T)> callback) {
+  Future<U> Transform(OnceCallback<U(T)> callback) {
     Promise<U> promise;
     Future<U> future = promise.GetFuture();
-    AndThen(base::BindOnce(TransformFutureValue<U>, std::move(promise),
-                           std::move(callback)));
+    AndThen(BindOnce(TransformFutureValue<U>, std::move(promise),
+                     std::move(callback)));
     return future;
   }
 
@@ -160,30 +119,28 @@ class Future {
 
   template <typename U>
   static void TransformFutureValue(Promise<U> promise,
-                                   base::OnceCallback<U(T)> callback,
+                                   OnceCallback<U(T)> callback,
                                    T value) {
-    promise.SetValueWithSideEffects(std::move(callback).Run(std::move(value)));
+    promise.SetValue(std::move(callback).Run(std::move(value)));
   }
 
   template <typename U>
-  static void TransformAndUnwrapFutureValue(
-      Promise<U> promise,
-      base::OnceCallback<Future<U>(T)> callback,
-      T value) {
+  static void TransformAndUnwrapFutureValue(Promise<U> promise,
+                                            OnceCallback<Future<U>(T)> callback,
+                                            T value) {
     std::move(callback)
         .Run(std::move(value))
-        .AndThen(base::BindOnce(UnwrapFutureValue<U>, std::move(promise)));
+        .AndThen(BindOnce(UnwrapFutureValue<U>, std::move(promise)));
   }
 
   template <typename U>
   static void UnwrapFutureValue(Promise<U> promise, U value) {
-    promise.SetValueWithSideEffects(std::move(value));
+    promise.SetValue(std::move(value));
   }
 
   SEQUENCE_CHECKER(sequence_checker_);
   std::optional<T> value_;
   raw_ptr<Promise<T>> promise_ptr_ = nullptr;
-  internal::FutureActiveState active_state_;
 };
 
 template <typename T>
@@ -204,10 +161,10 @@ class Promise {
       future_ = std::move(other.future_);
       future_ptr_ = std::exchange(other.future_ptr_, nullptr);
       callback_ = std::move(other.callback_);
-      active_state_ = std::move(other.active_state_);
       if (future_ptr_) {
         future_ptr_->promise_ptr_ = this;
       }
+      value_set_ = other.value_set_;
     }
     return *this;
   }
@@ -233,13 +190,15 @@ class Promise {
   void SetValue(T value) { SetValue(std::move(value), false); }
 
   // Sets the completed value of the associated future. If a callback has been
-  // registered for the associated future it will be executed synchronously.
+  // registered for the associated future it will be executed synchronously. In
+  // general, this method should only be used when the caller is known to be at
+  // the "bottom" of the stack.
   void SetValueWithSideEffects(T value) { SetValue(std::move(value), true); }
 
  private:
   friend class Future<T>;
 
-  void SetCallback(base::OnceCallback<void(T)> callback) {
+  void SetCallback(OnceCallback<void(T)> callback) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
     DCHECK(!callback_);
     callback_ = std::move(callback);
@@ -248,25 +207,27 @@ class Promise {
 
   void SetValue(T value, bool with_side_effects) {
     DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
-    active_state_.SetInactive();
     if (callback_) {
       if (with_side_effects) {
         std::move(callback_).Run(std::move(value));
       } else {
-        base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
-            FROM_HERE, base::BindOnce(std::move(callback_), std::move(value)));
+        SequencedTaskRunner::GetCurrentDefault()->PostTask(
+            FROM_HERE, BindOnce(std::move(callback_), std::move(value)));
       }
     } else if (future_ptr_) {
       future_ptr_->SetValue(std::move(value));
       future_ptr_ = nullptr;
+    } else {
+      CHECK(!value_set_) << "SetValue has already been called on this promise";
     }
+    value_set_ = true;
   }
 
   SEQUENCE_CHECKER(sequence_checker_);
   std::optional<Future<T>> future_;
   raw_ptr<Future<T>> future_ptr_ = nullptr;
-  base::OnceCallback<void(T)> callback_;
-  internal::FutureActiveState active_state_;
+  OnceCallback<void(T)> callback_;
+  bool value_set_ = false;
 };
 
 struct VoidFutureValue {};
@@ -274,21 +235,21 @@ struct VoidFutureValue {};
 template <>
 class Future<void> : public Future<VoidFutureValue> {
  public:
-  void AndThen(base::OnceCallback<void()> callback) {
+  void AndThen(OnceCallback<void()> callback) {
     Future<VoidFutureValue>::AndThen(
-        base::IgnoreArgs<VoidFutureValue>(std::move(callback)));
+        IgnoreArgs<VoidFutureValue>(std::move(callback)));
   }
 
   template <typename U>
-  Future<U> AndThen(base::OnceCallback<Future<U>()> callback) {
+  Future<U> AndThen(OnceCallback<Future<U>()> callback) {
     return Future<VoidFutureValue>::AndThen(
-        base::IgnoreArgs<VoidFutureValue>(std::move(callback)));
+        IgnoreArgs<VoidFutureValue>(std::move(callback)));
   }
 
   template <typename U>
-  Future<U> Transform(base::OnceCallback<U()> callback) {
+  Future<U> Transform(OnceCallback<U()> callback) {
     return Future<VoidFutureValue>::Transform(
-        base::IgnoreArgs<VoidFutureValue>(std::move(callback)));
+        IgnoreArgs<VoidFutureValue>(std::move(callback)));
   }
 };
 
@@ -314,7 +275,11 @@ Future<T> MakeReadyFuture(T value) {
   return promise.GetFuture();
 }
 
-Future<void> MakeReadyFuture();
+ALWAYS_INLINE Future<void> MakeReadyFuture() {
+  Promise<void> promise;
+  promise.SetValue();
+  return promise.GetFuture();
+}
 
 namespace internal {
 
@@ -323,7 +288,7 @@ struct MakeFutureHelper {
   using Promise = Promise<std::tuple<Args...>>;
 
   static auto WrapPromise(Promise promise) {
-    return base::BindOnce(
+    return BindOnce(
         [](Promise promise, Args... args) {
           promise.SetValueWithSideEffects(
               std::make_tuple<Args...>(std::move(args)...));
@@ -337,7 +302,7 @@ struct MakeFutureHelper<T> {
   using Promise = Promise<T>;
 
   static auto WrapPromise(Promise promise) {
-    return base::BindOnce(
+    return BindOnce(
         [](Promise promise, T value) {
           promise.SetValueWithSideEffects(std::move(value));
         },
@@ -350,9 +315,8 @@ struct MakeFutureHelper<void> {
   using Promise = Promise<void>;
 
   static auto WrapPromise(Promise promise) {
-    return base::BindOnce(
-        [](Promise promise) { promise.SetValueWithSideEffects(); },
-        std::move(promise));
+    return BindOnce([](Promise promise) { promise.SetValueWithSideEffects(); },
+                    std::move(promise));
   }
 };
 
@@ -362,8 +326,8 @@ struct MakeFutureHelper<> : public MakeFutureHelper<void> {};
 }  // namespace internal
 
 // Creates a promise/future pair, and calls the specified function with a
-// callback of type `base::OnceCallback<void(Args...)>`. The Future value
-// type depends upon the number of type arguments supplied, as follows:
+// callback of type `OnceCallback<void(Args...)>`. The Future value type depends
+// upon the number of type arguments supplied, as follows:
 //
 // - None: `Future<void>`
 // - One: `Future<T>`
@@ -377,7 +341,7 @@ auto MakeFuture(F&& f) {
   typename MakeFutureHelper::Promise promise;
   auto future = promise.GetFuture();
   auto callback = MakeFutureHelper::WrapPromise(std::move(promise));
-  f(base::BindPostTaskToCurrentDefault(std::move(callback)));
+  f(BindPostTaskToCurrentDefault(std::move(callback)));
   return future;
 }
 
@@ -402,8 +366,8 @@ class FutureAwaiter {
 
   template <typename P>
   void await_suspend(std::coroutine_handle<P> handle) noexcept {
-    future_.AndThen(base::BindOnce(&FutureAwaiter::OnReady<P>,
-                                   base::Unretained(this), handle));
+    future_.AndThen(
+        BindOnce(&FutureAwaiter::OnReady<P>, Unretained(this), handle));
   }
 
   T await_resume() noexcept { return std::move(*value_); }
@@ -436,8 +400,8 @@ class FutureAwaiter<void> {
 
   template <typename P>
   void await_suspend(std::coroutine_handle<P> handle) noexcept {
-    future_.AndThen(base::BindOnce(&FutureAwaiter::OnReady<P>,
-                                   base::Unretained(this), handle));
+    future_.AndThen(
+        BindOnce(&FutureAwaiter::OnReady<P>, Unretained(this), handle));
   }
 
   void await_resume() noexcept {}
@@ -463,21 +427,12 @@ class CoroutinePromiseBase : public Promise<T> {
   Future<T> get_return_object() noexcept { return this->GetFuture(); }
   std::suspend_never initial_suspend() const noexcept { return {}; }
   std::suspend_never final_suspend() const noexcept { return {}; }
-
-  void return_value(T value) noexcept {
-    this->SetValueWithSideEffects(std::move(value));
-  }
+  void return_value(T value) noexcept { this->SetValue(std::move(value)); }
 
   void return_value(Future<T> future) noexcept {
-    if (auto value = future.GetValueSynchronously()) {
-      this->SetValueWithSideEffects(std::move(*value));
-    } else {
-      future.AndThen(base::BindOnce(
-          [](Promise<T> promise, T value) {
-            promise.SetValueWithSideEffects(std::move(value));
-          },
-          std::move(*this)));
-    }
+    future.AndThen(BindOnce(
+        [](Promise<T> promise, T value) { promise.SetValue(std::move(value)); },
+        std::move(*this)));
   }
 
   void unhandled_exception() noexcept {}
@@ -489,7 +444,7 @@ class CoroutinePromiseBase<void> : Promise<void> {
   Future<void> get_return_object() noexcept { return this->GetFuture(); }
   std::suspend_never initial_suspend() const noexcept { return {}; }
   std::suspend_never final_suspend() const noexcept { return {}; }
-  void return_void() noexcept { this->SetValueWithSideEffects(); }
+  void return_void() noexcept { this->SetValue(); }
   void unhandled_exception() noexcept {}
 };
 
@@ -509,8 +464,9 @@ struct CoroutineEmptyArgTraits {
 
   static WeakPtrType GetWeakPtr(T&) {
     static_assert(std::is_empty_v<T>,
-                  "Non-empty coroutine arguments passed by reference must "
-                  "implement GetWeakPtr().");
+                  "Non-empty coroutine arguments passed by reference ("
+                  "including the implicit this pointer for member functions) "
+                  "must implement AsWeakPtr().");
     return {};
   }
 
@@ -519,9 +475,9 @@ struct CoroutineEmptyArgTraits {
 
 template <typename T>
 struct CoroutineRefArgTraits {
-  using WeakPtrType = base::WeakPtr<T>;
-  static WeakPtrType GetWeakPtr(T& obj) { return obj.GetWeakPtr(); }
-  static WeakPtrType GetWeakPtr(T* obj) { return obj->GetWeakPtr(); }
+  using WeakPtrType = WeakPtr<T>;
+  static WeakPtrType GetWeakPtr(T& obj) { return obj.AsWeakPtr(); }
+  static WeakPtrType GetWeakPtr(T* obj) { return obj->AsWeakPtr(); }
 };
 
 template <typename T>
@@ -538,7 +494,7 @@ struct CoroutineArgTraits<T*> : public CoroutineEmptyArgTraits<T> {};
 
 template <typename T>
 concept ProvidesWeakPtr = requires(T obj) {
-  { obj.GetWeakPtr() } -> std::same_as<base::WeakPtr<T>>;
+  { obj.AsWeakPtr() } -> std::same_as<WeakPtr<T>>;
 };
 
 template <typename T>
@@ -594,4 +550,4 @@ auto operator co_await(base::Future<T> future) {
   return base::internal::FutureAwaiter(std::move(future));
 }
 
-#endif  // BASE_FUTURES_FUTURE_H_
+#endif  // BASE_ASYNC_FUTURE_H_
