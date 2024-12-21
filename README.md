@@ -334,7 +334,7 @@ auto MakeFuture(F fn);
 
 ```
 
-### Memory
+### Memory Allocation
 
 `Future` and `Promise` do not perform dynamic memory allocation. They form an entangled
 pair, where each points to the other as long as the other is alive and necessary for the
@@ -529,6 +529,42 @@ base::Future<void> UseTableInterface() {
 }
 
 ```
+
+### Coroutine Memory Safety
+
+#### Function Arguments
+
+Coroutine parameters cannot be pointers or references unless they reference an
+empty object, or they expose weak pointers through an `AsWeakPtr` member function.
+Because the coroutine will not resume from `co_await` if any of the weak pointers
+becomes invalid, any such reference arguments are safe to use between suspension
+points.
+
+If a programmer needs to supply a raw pointer or reference to a coroutine, then
+they must do so by wrapping the reference in a type that affords dangling pointer
+mitigations (i.e. `raw_ptr` or `raw_ref`).
+
+"Borrowed range" types (e.g. `std::string_view`) also present liveness hazards.
+Although the same hazards currently exist for the Bind API, it may be preferrable
+to disallow these types as coroutine function parameters.
+
+#### Local Variables
+
+In normal C++ functions, we generally assume that arbitrary references stored in a
+local variable will remain valid until the function returns, despite the fact that
+no such language guarantee exists. In coroutines, on the other hand, arbitrary
+computation may occur at any `co_await` suspension point, and we can no longer
+reliably make this assumption.
+
+In order to safely write coroutines, we can add the following rule for the usage of
+pointer and reference types:
+
+* Local variables of pointer and reference types (`T*`, `T&`) must not be used after
+a `co_await` is reached in the control flow graph.
+
+If a reference-type local variable must be maintained across a `co_await` suspension
+point, then it must be wrapped in a type that affords dangling pointer mitigations
+(e.g. `raw_ptr` or `raw_ref`).
 
 ## Implementation
 
