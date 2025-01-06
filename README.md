@@ -155,6 +155,8 @@ A **future** is a reification of a return value for a C++ function that does not
 whose value may be available at some time in the future. It is a foundational building block of async
 programming. A **promise** represents the capability to eventually set the value of the future.
 
+*If the "future" or "promise" names are bothering you, you might want to head over to the [FAQ](FAQ.md).*
+
 ```cpp
 
 // Create a promise.
@@ -566,6 +568,7 @@ If a reference-type local variable must be maintained across a `co_await` suspen
 point, then it must be wrapped in a type that affords dangling pointer mitigations
 (e.g. `raw_ptr` or `raw_ref`).
 
-## Implementation
+## Links
 
+[FAQ](FAQ.md)
 [Prototype](implementation/)
