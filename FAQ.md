@@ -51,7 +51,7 @@ template <typename T>
 T WaitFor(Future<T> future) {
   std::optional<T> value;
   RunLoop loop;
-  future.AndThen(base::BindLambdaForTesting([&](T val) {
+  std::move(future).AndThen(base::BindLambdaForTesting([&](T val) {
     value = std::move(val);
     loop.Quit();
   }));

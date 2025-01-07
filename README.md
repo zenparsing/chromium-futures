@@ -167,7 +167,7 @@ base::Promise<int> promise;
 base::Future<int> future = promise.GetFuture();
 
 // Listen for the eventual value of the future.
-future.AndThen(base::BindOnce([](int value) {
+std::move(future).AndThen(base::BindOnce([](int value) {
   LOG(INFO) << "The value of the future is: " << value;
 }));
 
@@ -232,25 +232,32 @@ class Future {
   Future(Future&& other);
   Future& operator=(Future&& other);
 
-  // Returns the value of the future, if available. If a value is returned,
-  // then subsequent calls will return `std::nullopt`.
-  std::optional<T> GetValueSynchronously();
+  // Returns true if the future currently holds a value.
+  bool is_ready() const;
+
+  // Returns the value of the future. It is an error to call this method when
+  // the future does not currently hold a value.
+  T GetValueSynchronously() &&;
 
   // Attaches a callback that will be executed when the future value is
   // available. The callback will be executed on the caller's task runner
   // and will always execute in a future turn. Once called, the future will
   // become inactive. It is an error to call `AndThen` on an inactive future.
-  void AndThen(base::OnceCallback<void(T)> callback);
+  void AndThen(base::OnceCallback<void(T)> callback) &&;
+
+  // Attaches a callback that accepts a reference to the future value.
+  void AndThen(OnceCallback<void(T&)> callback) &&;
+  void AndThen(OnceCallback<void(const T&)> callback) &&;
 
   // Attaches a transforming callback that will be executed when the future
   // value is available. Returns a future for the transformed value.
   template <typename U>
-  Future<U> AndThen(base::OnceCallback<Future<U>(T)> callback);
+  Future<U> AndThen(base::OnceCallback<Future<U>(T)> callback) &&;
 
   // Attaches a transforming callback that will be executed when the future
   // value is available. Returns a future for the transformed value.
   template <typename U>
-  Future<U> Transform(base::OnceCallback<U(T)> callback);
+  Future<U> Transform(base::OnceCallback<U(T)> callback) &&;
 };
 
 // ============
@@ -571,4 +578,4 @@ point, then it must be wrapped in a type that affords dangling pointer mitigatio
 ## Links
 
 [FAQ](FAQ.md)
-[Prototype](implementation/)
+[Implementation](https://chromium-review.googlesource.com/c/chromium/src/+/6115411)
