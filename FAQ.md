@@ -5,19 +5,28 @@
 There aren't many good options for naming an object that represents the return
 value of an asynchronous C++ function:
 
-* `Task<T>`: Already used for the task scheduling system in Chromium.
-* `Future<T>`: Conflicts subtley with `std::future`. Also conflicts with `base::test::TestFuture`.
-* `Async<T>`: Awkward in usage because it is not a noun. Also, conflicts with
-`std::async`.
-* `Co<T>`: Awkward because it means nothing. Also, it is overly general since
+* `Task`/`TaskResolver`: Already used for the task scheduling system in Chromium.
+Not an option.
+* `Future`/`Promise`: Conflicts subtley with `std::future` and `std::promise`.
+Also conflicts with `base::test::TestFuture`. Also, `x11::Future` is a thing.
+* `Promise`/`PromiseResolver`: A JS-inspired option. It would be awkward for the
+thing that C++ calls a "promise" to be called here a "promise resolver", and
+for the thing that C++ calls a "future" to be called here a "promise".
+* `Async`/`AsyncResolver`: Awkward in usage because it is not a noun. Although
+"async something" is communicative, how does one talk about an async thing in
+general? What would we call a collection of async things? "asyncs"? Also,
+conflicts with `std::async`.
+* `Co`: Awkward because it means nothing. Also, it is overly general since
 C++ coroutines can be used for many different applications depending on the
 return type.
-* `Awaitable<T>`: Overly long. Also, it is overly general since many things
-may be `co_await`-able depending on how `operator co_await` is overloaded.
+* `Awaitable`/`AwaitableResolver`: Overly long. Also, it is overly general since
+many things may be `co_await`-able depending on how `operator co_await` is
+overloaded.
 
-In the author's opinion, "Future/Promise" is the least-bad option.
+In the author's opinion, since there are no clear winners, "Future"/"Promise" is
+the least-bad option.
 
-### Conflicts with std::promise and std::future
+### Regarding std::promise and std::future
 
 A conflict with a type in `std` is unfortunate. On the other hand, in C++ the
 "promise" term is already overloaded:
@@ -35,7 +44,7 @@ intentionally similar in shape to `std::promise`:
 It should also be noted that Chromium is already using the "future" name for
 something that is quite unlike `std::future`.
 
-### Conflicts with base::test::TestFuture
+### Regarding base::test::TestFuture
 
 The `TestFuture` API is quite ergonomic for writing tests that must wait on an
 async value. Clearly there is a need for a future-like API. If this
@@ -63,11 +72,28 @@ T WaitFor(Future<T> future) {
 
 ```
 
+### Regarding x11::Future
+
+`x11::Future` is a typical future type that allows attaching a completion
+callback using the `OnResponse` method. The future value type is `Reply<V, E>`
+which is functionally similar to `expected<V, E>`. In addition to asynchronously
+listening for a completion value, `x11:Future` also allows the holder to stop
+the current thread's execution until the server response has arrived. Since
+`base::Future` is not intended for blocking synchronization, how could this
+design be altered to allow integration with `co_await`?
+
+We can note that if the caller wants to wait for the response, then there's no
+need for either a future or a `co_await`. It can just call `Sync()` and get the
+value directly. It might make sense therefore to refactor the code so that
+`x11::Future` becomes something like `x11::PendingResponse` (or `x11::Response`
+if some other name changes can be made) and in addition to the `OnResponse`
+method, it would expose a `GetFuture` method that would return a `base::Future`.
+
 ## Weren't Promises rejected for Chromium a while ago?
 
 Yes. There was a effort from several years ago which attempted to add a
 JavaScript-like Promise API to Chromium. In the author's opinion, that proposal
-was overly complex and did not fit well with the either the task scheduling
+was extremely complex and did not fit well with the either the task scheduling
 library or C++ in general.
 
 ## Why doesn't Future accept multiple type parameters?
@@ -80,4 +106,5 @@ function call cannot return multiple values.
 
 Since Chromium does not support exceptions, a function cannot "throw" an
 error. Since a `Future` is strictly a representation of the result of a C++
-function call, it does not need to support an error return "channel".
+function call, it does not need to support an error return "channel". Users
+that want to provide an error value can do so using `expected<V, E>`.
