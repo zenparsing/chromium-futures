@@ -426,7 +426,7 @@ class AsyncClass {
  public:
   auto AsWeakPtr() { return weak_factory_.GetWeakPtr(); }
 
-  base::Future<int> PerformAsyncAction(base::OnceCallback<void(int)> callback) {
+  base::Future<int> PerformAsyncAction() {
     // Note that we will not resume from co_await if we have been destroyed.
     StepOneValue step_1_value = co_await PerformAsyncStepOne();
     StepTwoValue step_2_value = co_await PerformAsyncStepTwo();
@@ -577,5 +577,5 @@ point, then it must be wrapped in a type that affords dangling pointer mitigatio
 
 ## Links
 
-[FAQ](FAQ.md)
-[Implementation](https://chromium-review.googlesource.com/c/chromium/src/+/6115411)
+- [FAQ](FAQ.md)
+- [Implementation](https://chromium-review.googlesource.com/c/chromium/src/+/6115411)

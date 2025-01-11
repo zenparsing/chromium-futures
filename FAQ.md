@@ -85,9 +85,10 @@ design be altered to allow integration with `co_await`?
 We can note that if the caller wants to wait for the response, then there's no
 need for either a future or a `co_await`. It can just call `Sync()` and get the
 value directly. It might make sense therefore to refactor the code so that
-`x11::Future` becomes something like `x11::PendingResponse` (or `x11::Response`
-if some other name changes can be made) and in addition to the `OnResponse`
-method, it would expose a `GetFuture` method that would return a `base::Future`.
+`x11::Future` becomes something like `x11::PendingResponse` (or perhaps
+`x11::Request` if some other name changes can be made) and in addition to the
+`OnResponse` method, it would expose a `GetFuture` method that would return a
+`base::Future`.
 
 ## Weren't Promises rejected for Chromium a while ago?
 
@@ -108,3 +109,65 @@ Since Chromium does not support exceptions, a function cannot "throw" an
 error. Since a `Future` is strictly a representation of the result of a C++
 function call, it does not need to support an error return "channel". Users
 that want to provide an error value can do so using `expected<V, E>`.
+
+## How will this feature affect the evolution of the codebase as a whole?
+
+Even without guidance, developers will be strongly incentivized to return
+`base::Future` instead of accepting a `base::Callback`, because a function
+that returns `base::Future` will be directly usable in a `co_await` expression.
+We can therefore expect that over time `base::Future` will gradaully dominate
+async APIs in Chromium. The task scheduling APIs, and some other low-level
+APIs will remain callback-based. We can also expect that some users will
+continue to use the argument binding capabilities of `base::Bind` in the
+context of a functional programming style. At the limit:
+
+* `base::Future` will be used for most async APIs that developers touch.
+* Callback-accepting APIs will be used for low-level task-scheduling code.
+* `base::Bind` will be used for functional-style programming.
+
+## How will developers migrate to using base::Future?
+
+Migrating an API from accepting a callback to returing a `base::Future` can be
+gradual. As a first step, a simple overload will suffice:
+
+```cpp
+
+// A classic callback-oriented API:
+void SomeAsyncFunction(base::OnceCallback<void()> callback);
+
+// An overload to support `base::Future` and `co_await`:
+base::Future<void> SomeAsyncFunction() {
+  return base::MakeFuture<void>([&](auto callback) {
+    SomeAsyncFunction(std::move(callback));
+  });
+}
+
+```
+
+At this stage, no changes to callsites are required. As a second step, the
+callback API can be deprecated (using a tagged suffix such as `*InMigration`). When
+we are ready to remove the callback-oriented API, most callsites can be changed
+mechanically:
+
+```cpp
+
+// Before:
+SomeAsyncFunction(base::BindOnce(OnAsyncResult));
+
+// After:
+SomeAsyncFunction().AndThen(base::BindOnce(OnAsyncResult));
+
+```
+
+Callback-oriented APIs that return multiple values or return values by
+reference will take a bit more work.
+
+For callback-oriented APIs that return multiple values, the callsite will
+need to be adjusted to accept an `std::tuple` instead of multiple values.
+
+Callback-oriented APIs that return values by reference will need to be
+handled on a case-by-case basis. Does the value need to be passed by reference?
+If the value needs to be passed by reference for some reason, then it will
+likely need to be converted to a shared pointer, a weak pointer, or (in very
+rare cases) a `raw_ptr`. The author expects that most callback APIs can be
+easily refactored to return by value.
