@@ -42,7 +42,7 @@ intentionally similar in shape to `std::promise`:
 * `std::promise::get_future` => `base::Promise::GetFuture`
 
 It should also be noted that Chromium is already using the "future" name for
-something that is quite unlike `std::future`.
+things that are quite unlike `std::future`.
 
 ### Regarding base::test::TestFuture
 
@@ -50,7 +50,7 @@ The `TestFuture` API is quite ergonomic for writing tests that must wait on an
 async value. Clearly there is a need for a future-like API. If this
 `base::Future` type is added, then `TestFuture` should be deprecated and all
 usage should be migrated to using `base::Future`, along with a test-only
-function that will block until a future is resolved:
+function that will block until a future is resolved, such as:
 
 ```cpp
 
@@ -95,7 +95,9 @@ value directly. It might make sense therefore to refactor the code so that
 Yes. There was a effort from several years ago which attempted to add a
 JavaScript-like Promise API to Chromium. In the author's opinion, that proposal
 was extremely complex and did not fit well with the either the task scheduling
-library or C++ in general.
+library or C++ in general. Organizational trauma resulting from cancelled
+work is real and unfortunate, but sometimes it's necessary to leave open land
+that can be built upon when the time is right.
 
 ## Why doesn't Future accept multiple type parameters?
 
@@ -113,17 +115,22 @@ that want to provide an error value can do so using `expected<V, E>`.
 ## How will this feature affect the evolution of the codebase as a whole?
 
 Even without guidance, developers will be strongly incentivized to return
-`base::Future` instead of accepting a `base::Callback`, because a function
+`base::Future` instead of accepting a `base::OnceCallback`, because a function
 that returns `base::Future` will be directly usable in a `co_await` expression.
 We can therefore expect that over time `base::Future` will gradaully dominate
 async APIs in Chromium. The task scheduling APIs, and some other low-level
-APIs will remain callback-based. We can also expect that some users will
-continue to use the argument binding capabilities of `base::Bind` in the
-context of a functional programming style. At the limit:
+APIs will remain callback-based, except for a few future-returning overloads
+(e.g. `PostTaskAndReplyWithResult`). Repeating callbacks will continue to be
+used for observational APIs or functional delegation. We can also expect that
+some users will continue to use the argument binding capabilities of
+`base::BindOnce` in the context of a functional programming style. At the
+limit:
 
 * `base::Future` will be used for most async APIs that developers touch.
 * Callback-accepting APIs will be used for low-level task-scheduling code.
-* `base::Bind` will be used for functional-style programming.
+* `base::RepeatingCallback` will be used for observation and functional
+delegation.
+* `base::BindOnce` will continue to be used for functional-style programming.
 
 ## How will developers migrate to using base::Future?
 
@@ -145,9 +152,9 @@ base::Future<void> SomeAsyncFunction() {
 ```
 
 At this stage, no changes to callsites are required. As a second step, the
-callback API can be deprecated (using a tagged suffix such as `*InMigration`). When
-we are ready to remove the callback-oriented API, most callsites can be changed
-mechanically:
+callback API can be deprecated (using a tagged suffix such as `*InMigration`).
+When we are ready to remove the callback-oriented API, most callsites can be
+changed mechanically:
 
 ```cpp
 
