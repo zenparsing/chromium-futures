@@ -258,6 +258,11 @@ class Future {
   // value is available. Returns a future for the transformed value.
   template <typename U>
   Future<U> Transform(base::OnceCallback<U(T)> callback) &&;
+
+  // Returns a future for either the eventual value of this future, or a default
+  // value if the associated promise for this future is destroyed before its
+  // value is set.
+  Future ValueOr(T&& default_value) &&;
 };
 
 // ============
