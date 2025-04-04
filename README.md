@@ -366,7 +366,9 @@ Coroutines can return `Future` objects. Within such a coroutine, the following s
 apply:
 
 * `co_await Future<T>`: Waits for the specified future value to become available and resumes
-the coroutine with a value of type `T`.
+the coroutine with a value of type `T`. If the future value will never become available
+(because it's associated promise is destroyed before a value is set), then the coroutine's
+promise will be dropped and the coroutine state will be released.
 * `co_return T`: Sets the value of the underlying promise to the specified value.
 * `co_return Future<T>`: Waits for the specified future to become available and sets the
 value of the underlying promise to the awaited value.
